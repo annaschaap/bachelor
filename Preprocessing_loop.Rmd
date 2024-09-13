@@ -1,0 +1,90 @@
+---
+title: "Preprocessing_loop"
+author: "Ida Andresen"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r, import packages}
+
+library(tidyverse)
+library(readr)
+library(dplyr)
+library(purrr)
+library(tools)
+
+```
+
+```{r}
+# Set paths to the folders
+csv_folder <- "MatchingGame_Accoustics"
+txt_folder <- "transcripts_timecodes"
+output_folder <- "MatchingGame_Accoustics_preprocessed"
+
+# Create the output directory if it does not exist
+if (!dir.exists(output_folder)) {
+  dir.create(output_folder)
+}
+
+```
+
+
+```{r}
+# List all CSV and TXT files
+csv_files <- list.files(path = csv_folder, pattern = "*.csv", full.names = FALSE)
+txt_files <- list.files(path = txt_folder, pattern = "*.txt", full.names = FALSE)
+
+summary(csv_files)
+summary(txt_files)
+```
+```{r}
+# Function to extract the common part of the filename (first 26 characters)
+get_prefix <- function(filename) {
+  substr(basename(filename), 1, 26)
+}
+```
+
+
+```{r}
+# Loop through each CSV file
+for (csv_file in csv_files) {
+  
+  # Get the common prefix of the current CSV file
+  csv_prefix <- get_prefix(csv_file)
+  
+  # Find the corresponding TXT file by matching the prefix
+  matching_txt <- txt_files[grepl(csv_prefix, txt_files)]
+  
+  if (length(matching_txt) == 1) {
+    # Read the CSV and TXT files
+    df <- read_csv2(file.path(csv_folder, basename(csv_file)))
+    trans_df <- read_tsv(file.path(txt_folder, basename(matching_txt)), col_names = FALSE)
+    
+    # Filter the transcript data for "Child" and "MatchingGame"
+    trans_df_filtered <- trans_df %>% 
+      filter(X5 == "Child" & X6 == "MatchingGame")
+    
+    # Convert frameTime to numeric
+    df$frameTime <- as.numeric(df$frameTime)
+    
+    # Filter the CSV data to keep only rows where frameTime is within the child's speaking time
+    df_filtered <- 
+      df %>%
+      rowwise() %>%
+      filter(any(frameTime >= trans_df_filtered$X2 & frameTime <= trans_df_filtered$X3))
+    
+    # Generate output file path
+    output_file <- file.path(output_folder, basename(csv_file))
+    
+    # Save the filtered data to the output folder
+    write_csv2(df_filtered, output_file)
+    
+    cat("Processed and saved:", output_file, "\n")
+  } else {
+    cat("No matching TXT file for:", csv_file, "\n")
+  }
+}
+
+```
+
+

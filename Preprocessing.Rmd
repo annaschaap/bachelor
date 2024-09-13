@@ -1,0 +1,48 @@
+---
+title: "Data preproccessing"
+author: "Ida Andresen"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r, import packages}
+
+library(tidyverse)
+library(readr)
+library(dplyr)
+library(purrr)
+library(tools)
+
+```
+
+```{r, import data}
+
+df <- read_csv2("MatchingGame_Accoustics/20230330_200410EDT_PIN8698_VBM_DC-mplex_MatchingGame_secondCH.csv")
+
+trans_df <- read_tsv("transcripts_timecodes/20230330_200410EDT_PIN8698_VBM_DC-mplex.txt", col_names = FALSE)
+```
+
+```{r, delete all rows from trans_df that is not child}
+trans_df_filtered <- trans_df %>% 
+  filter(X5 == "Child" & X6 == "MatchingGame")
+
+```
+
+```{r}
+df$frameTime <- as.numeric(df$frameTime)
+```
+
+```{r, remove all frameTimes, where the child is not speaking according to the transcript}
+df_filtered <- 
+  df %>%
+  rowwise() %>%
+  filter(any(frameTime >= trans_df_filtered$X2 & frameTime <= trans_df_filtered$X3))
+```
+
+```{r}
+summary(df_filtered$frameTime)
+```
+```{r}
+df_preprocessed <-read_csv2("MatchingGame_Accoustics_preprocessed/20230330_200410EDT_PIN8698_VBM_DC-mplex_MatchingGame_secondCH.csv")
+```
+
