@@ -1,0 +1,132 @@
+---
+title: "automatized_preprocessing"
+author: "Anna"
+date: "2024-09-13"
+output: html_document
+---
+### TO DO
+
+
+```{r packages}
+install.packages("groupdata2")
+
+library(tidyverse)
+library(dplyr)
+library(purrr)
+library(ggplot2)
+library(stringr)
+library(groupdata2)
+library(glmnet)
+library(broom)
+source("functions/transcript_preprop.R")
+source("functions/acoustics_preprop2.R")
+source("functions/load_files.R")
+source("functions/meta_preprop.R")
+source("functions/q_split.R")
+source("functions/q_duplicate_dates.R")
+source("functions/formatting.R")
+source("functions/train_ids.R")
+source("functions/partitioning.R")
+source("functions/normalize.R")
+source("functions/elastic_net.R")
+
+```
+
+```{r loading in the files}
+
+Q_files <- load_files("Questions")
+MG_files <- load_files("MatchingGame")
+
+```
+
+```{r preprocessing transcripts}
+
+Q_transcripts <- transcript_preprop("Questions", Q_files)
+MG_transcripts <- transcript_preprop("MatchingGame", MG_files)
+
+```
+
+```{r preprocessing acoustics}
+
+acoustics_preprop(Q_transcripts, task = "Questions", Q_files)
+acoustics_preprop(MG_transcripts, task = "MatchingGame", MG_files)
+
+```
+
+```{r splitting Question data into fam and unfam}
+
+q_duplicate_dates("Questions")
+q_split("Questions")
+
+```
+
+
+```{r preprocessing meta data and splitting ids in train/test}
+
+meta <- meta_preprop()
+train_id_df <- train_ids(meta)
+
+```
+
+```{r formatting the data correctly}
+
+Q_fam <- formatting(meta, "Questions_fam")
+Q_unfam <- formatting(meta, "Questions_unfam")
+MG <- formatting(meta, "MatchingGame")
+
+```
+
+```{r removing NAs}
+# obs remove this column if everything is run again - it is now incorporated in acoustic_preprop2
+
+Q_fam <- na.omit(Q_fam)
+Q_unfam <- na.omit(Q_unfam)
+MG <- na.omit(MG)
+```
+
+
+```{r partitioning data into train and test sets}
+
+partitioning(train_id_df, Q_fam, "Questions_fam")
+partitioning(train_id_df, Q_unfam, "Questions_unfam")
+partitioning(train_id_df, MG, "MatchingGame")
+
+```
+
+```{r normalizing}
+# loading in partitioned sets
+MG <- read_delim("/work/bachelor/Anna/partitioned/train_MatchingGame.csv", delim = ";", show_col_types = FALSE)
+Qfam <- read_delim("/work/bachelor/Anna/partitioned/train_Questions_fam.csv", delim = ";", show_col_types = FALSE)
+Qunfam <- read_delim("/work/bachelor/Anna/partitioned/train_Questions_unfam.csv", delim = ";", show_col_types = FALSE)
+
+# making lists of test sets belonging to each model
+all <- list.files("/work/bachelor/Anna/partitioned", full.names = TRUE)
+MG_list <- c(all[1], all[3], all[4]) 
+Qfam_list <- c(all[1], all[2], all[3], all[5], all[6])
+Qunfam_list <- c(all[3], all[4], all[5])
+
+# MatchingGame model and respective test sets
+MG_model <- normalizing(MG, datatype = "train")
+normalizing(MG, MG_list, datatype = "test")
+
+# Questions familiar model and respective test sets
+Qfam_model <- normalizing(Qfam, datatype = "train")
+normalizing(Qfam, Qfam_list, datatype = "test")
+
+# Questions unfamiliar model and respective test sets
+Qunfam_model <- normalizing(Qunfam, datatype = "train")
+normalizing(Qunfam, Qunfam_list, datatype = "test")
+
+```
+
+```{r, elastic net}
+elastic(MG_model, 3, "MatchingGame")
+elastic(Qfam_model, 3, "Questions_fam")
+elastic(Qunfam_model, 3, "Questions_unfam")
+
+```
+
+```{r}
+c <- read_delim("/work/bachelor/data/Preprop_data_w_folds/MatchingGame_w_3folds.csv", delim = ";")
+```
+
