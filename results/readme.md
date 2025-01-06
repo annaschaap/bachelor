@@ -1,1 +1,1 @@
-folder of all results related to the thesis
+folder containing all code, that is referred to in the bachelors thesis
