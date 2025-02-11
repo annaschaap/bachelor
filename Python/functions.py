@@ -572,7 +572,7 @@ def dimension_plot(dimension, plot=True):
         str: Tabulated results as a string.
         (Optional) A plot of the results if `plot=True`.
     """
-    folder_path = "./results/xgb/test"
+    folder_path = "./results/test"
 
     # File selection based on the dimension
     if dimension == 'familiarity':
