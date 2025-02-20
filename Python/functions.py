@@ -19,6 +19,7 @@ from sklearn.model_selection import GroupKFold
 from typing import List, Optional, Tuple
 from tabulate import tabulate
 from matplotlib import colors as mcolors
+from collections import defaultdict
 
 random.seed(1213870)
 
@@ -109,10 +110,11 @@ def parametertuner(train:pd.DataFrame,
     # extracting the tuned parameters
     best_params = study.best_params
 
+    # Get the current script's directory
+    script_dir = os.path.dirname(os.path.abspath(__file__))
     # Defining save directory
-    save_dir = f'/work/bachelor/Python/results/params/{train_name}'
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
+    save_dir = os.path.join(script_dir, "results", "params", train_name)
+    os.makedirs(save_dir, exist_ok=True)
 
     # Save plots inside save_dir
     plot_optimization_history(study).write_html(f"{save_dir}/optimization_history_{train_name}.html")
@@ -424,90 +426,81 @@ def modeltesting(
 
     return classification_reports, confusion_matrices, model_predictions, ensemble_classification_report, ensemble_confusion_matrix
 
-
 def class_preparation(train_name, order: dict, new_names: dict):
     """
-    This function extracts all test results from a model, which are afterward used to visualize the results.
+    This function extracts all test results from multiple model runs, averages them, 
+    and computes error intervals.
 
     Args:
-        train_name (str): Name of the training set.
-        order: order of the tests on the x axis
-        new_names (str): names (test conditions) used on the x-axis
+        train_name_base (str): Base name of the training set
+        order (dict): Desired order of the test conditions on the x-axis.
+        new_names (dict): New names (test conditions) for display on the x-axis.
 
     Returns:
-        pd.DataFrame: Dataframe containing F1 scores, error intervals, model type, and test name for each test set the model was tested on.
+        pd.DataFrame: Dataframe containing averaged sensitivities, specificities, 
+                      and their respective error bars.
     """ 
-    # Define folder path
-    folder_path = f"./results/test/{train_name}"
+    # Iterate through all 5 training runs (train_name_1, train_name_2, ..., train_name_5)
+    all_sensitivities = {}
+    all_specificities = {}
 
-    files = [
-        os.path.join(folder_path, file)
-        for file in os.listdir(folder_path)
-        if '1_participant_classification_report' in file
-    ]
+    for i in range(1, 4):  # Loop over train_name_1 to train_name_5
+        folder_path = f"./results/test/{train_name}_{i}"
 
-    # Initialize lists to store results
-    sensitivities = []
-    specificities = []
-    test_types = []
-    eb_sensitivities = [] # error bars
-    eb_specificities = [] # error bars
+        files = [
+            os.path.join(folder_path, file)
+            for file in os.listdir(folder_path)
+            if '_participant_classification_report' in file
+        ]
 
-    # Process files from both models
-    for file_path in files:
-        # extracting test type based on filename
-        filename = os.path.basename(file_path)
-        name_suffix = filename.find('_participant_classification_report.csv')
-        test_type = filename[:name_suffix]
-        test_types.append(test_type)
+        for file_path in files:
+            # Extracting test type from filename
+            filename = os.path.basename(file_path)
+            name_suffix = filename.find('_participant_classification_report.csv')
+            test_type = filename[:name_suffix-2]
 
-        # Load classification report
-        conf_matrix = pd.read_csv(file_path)
+            # Load classification report
+            conf_matrix = pd.read_csv(file_path)
 
-        # Extract F1 scores for each class
-        sensitivity = conf_matrix.iloc[0, 0]/(conf_matrix.iloc[0, 0]+conf_matrix.iloc[0, 1])
-        specificity = conf_matrix.iloc[1, 1]/(conf_matrix.iloc[1, 1]+conf_matrix.iloc[1, 0])
-        sensitivities.append(sensitivity)
-        specificities.append(specificity)
+            # Extract Sensitivity (True Positive Rate) & Specificity (True Negative Rate)
+            sensitivity = conf_matrix.iloc[0, 0] / (conf_matrix.iloc[0, 0] + conf_matrix.iloc[0, 1])
+            specificity = conf_matrix.iloc[1, 1] / (conf_matrix.iloc[1, 1] + conf_matrix.iloc[1, 0])
 
-        # Load predictions to calculate sample size
-        pred_file_path = os.path.join(
-            folder_path,
-            f'{test_type}_participant_predictions.csv'
-        )
+            # Store values for averaging
+            all_sensitivities.setdefault(test_type, []).append(sensitivity)
+            all_specificities.setdefault(test_type, []).append(specificity)
 
-        predictions = pd.read_csv(pred_file_path)
-        n = predictions.shape[0]  # Sample size
+    # Compute mean and standard deviation for sensitivities and specificities
+    avg_sensitivities = {k: np.mean(v) for k, v in all_sensitivities.items()}
+    avg_specificities = {k: np.mean(v) for k, v in all_specificities.items()}
+    
+    std_sensitivities = {k: np.std(v, ddof=1) for k, v in all_sensitivities.items()}
+    std_specificities = {k: np.std(v, ddof=1) for k, v in all_specificities.items()}
 
-        # Calculate error bars
-        eb_sensitivity = ((sensitivity * (1 - sensitivity)) / n) ** 0.5
-        eb_specificity = ((specificity * (1 - specificity)) / n) ** 0.5
-        eb_sensitivities.append(eb_sensitivity)
-        eb_specificities.append(eb_specificity)
+    # Compute standard error of the mean (SEM) as error bars
+    eb_sensitivities = {k: std / np.sqrt(5) for k, std in std_sensitivities.items()}
+    eb_specificities = {k: std / np.sqrt(5) for k, std in std_specificities.items()}
 
     # Combine results into a DataFrame
     results = pd.DataFrame({
-        'test_type': test_types,
-        'Sensitivity': sensitivities,
-        'Specificity': specificities,
-        'eb_sensitivity': eb_sensitivities,
-        'eb_specificity': eb_specificities
+        'test_type': list(avg_sensitivities.keys()),
+        'Sensitivity': list(avg_sensitivities.values()),
+        'Specificity': list(avg_specificities.values()),
+        'eb_sensitivity': list(eb_sensitivities.values()),
+        'eb_specificity': list(eb_specificities.values())
     })
 
-    # Define the desired order for test types:
-    desired_order = order
-
-    # Ensure the test_type column follows this order
+    # Ensure test_type follows the desired order
     results['test_type'] = pd.Categorical(
         results['test_type'], 
-        categories=desired_order, 
+        categories=order, 
         ordered=True
     )
 
-    # Sort the DataFrame by test_type
+    # Sort by test_type
     results = results.sort_values('test_type')
 
-    # Rename test sets using new_names dictionary
+    # Rename test types using new_names mapping
     results['test_type'] = results['test_type'].replace(new_names)
 
     return results
@@ -561,11 +554,11 @@ def class_plot(train_name: str, plot_values: pd.DataFrame):
 
 def dimension_plot(dimension, plot=True):
     """
-    Processes classification report files, computes F1 scores and error bars, 
-    and optionally plots the results.
+    Processes classification report files from multiple model runs, computes 
+    F1 scores and error bars, and optionally plots the results.
 
     Args:
-        dimension (str): Dimension to analyze ('familiarity' or other).
+        dimension (str): Dimension to analyze.
         plot (bool): Whether to generate plots. Default is True.
 
     Returns:
@@ -573,6 +566,9 @@ def dimension_plot(dimension, plot=True):
         (Optional) A plot of the results if `plot=True`.
     """
     folder_path = "./results/test"
+    
+    # Dictionary to store the F1 scores for each test_name and model_type
+    f1_scores = defaultdict(list)
 
     # File selection based on the dimension
     if dimension == 'familiarity':
@@ -590,23 +586,64 @@ def dimension_plot(dimension, plot=True):
             if '_participant_classification_report' in file and 'Qunfam' not in file
         ]
 
-    # lists to store results
-    f1_scores_td = []
-    f1_scores_asd = []
+    # Looping through files to collect F1 scores
+    for file_path in files:
+        filename = os.path.basename(file_path)
+        name_suffix = filename.find('_participant_classification_report')
+        test_name = filename[:name_suffix-2]
+        
+        if dimension == 'familiarity':
+            # Define test types based on naming convention
+            if "Qunfam" in test_name and "Qfam" in test_name and '80' in test_name:
+                test_type = 'Different Familiarity, Same Participants'
+            elif "Qunfam" in test_name and "Qfam" in test_name and '20' in test_name:
+                test_type = 'Different Familiarity, Different Participants'
+            else:
+                test_type = 'Within'
+            
+            model_type = 'Convo With Experimenter' if test_name[:2] == 'Qu' else 'Convo With Caregiver'
+
+        else:
+            # Define test types based on naming convention
+            if "MG" in test_name and "Qfam" in test_name and '80' in test_name:
+                test_type = 'Different Task, Same Participants'
+            elif "MG" in test_name and "Qfam" in test_name and '20' in test_name:
+                test_type = 'Different Task, Different Participants'
+            else:
+                test_type = 'Within'
+            
+            model_type = 'Matching Game' if test_name[0] == 'M' else 'Convo With Caregiver'
+
+        # Load classification report
+        classification_report = pd.read_csv(file_path)
+
+        # F1 scores from classification reports
+        f1_td = classification_report.iloc[2, 0]
+        f1_asd = classification_report.iloc[2, 1]
+        f1_average = classification_report.iloc[2, 4]
+
+        # Store F1 scores for averaging
+        f1_scores[test_name].append(f1_average)
+
+    # mean and standard deviation (for error bars)
     f1_averages = []
     f1_averages_ebs = []
     test_names = []
     test_types = []
     model_types = []
 
-    # loop to process files
-    for file_path in files:
-        filename = os.path.basename(file_path)
-        name_suffix = filename.find('_participant_classification_report')
-        test_name = filename[:name_suffix]
-        print(test_name)
-        test_names.append(test_name)
+    for test_name, scores in f1_scores.items():
+        # Calculate mean and standard deviation of F1 scores across runs
+        f1_mean = np.mean(scores)
+        f1_std = np.std(scores, ddof=1) # as it is computed from sample size
+        n_runs = len(scores)
+        f1_eb = f1_std / np.sqrt(n_runs)  # Standard error of the mean (SEM)
 
+        f1_averages.append(f1_mean)
+        f1_averages_ebs.append(f1_eb)
+        test_names.append(test_name)
+        
+        # Determine the test_type and model_type based on test_name
         if dimension == 'familiarity':
             if "Qunfam" in test_name and "Qfam" in test_name and '80' in test_name:
                 test_type = 'Different Familiarity, Same Participants'
@@ -630,43 +667,16 @@ def dimension_plot(dimension, plot=True):
         test_types.append(test_type)
         model_types.append(model_type)
 
-        # Load classification report
-        classification_report = pd.read_csv(file_path)
-
-        # F1 scores from classification reports
-        f1_td = classification_report.iloc[2, 0]
-        f1_asd = classification_report.iloc[2, 1]
-        f1_average = classification_report.iloc[2, 4]
-        f1_scores_td.append(f1_td)
-        f1_scores_asd.append(f1_asd)
-        f1_averages.append(f1_average)
-
-        # Load predictions to calculate sample size
-        pred_file_path = [
-            os.path.join(root, file)
-            for root, _, files in os.walk(folder_path)
-            for file in files
-            if file == f'{test_name}_participant_predictions.csv'
-        ]
-        predictions = pd.read_csv(pred_file_path[0])
-        n = predictions.shape[0]  # Sample size
-
-        # Calculate F1 error bars
-        f1_average_eb = ((f1_average * (1 - f1_average)) / n) ** 0.5
-        f1_averages_ebs.append(f1_average_eb)
-
     # Combine results into a DataFrame
     results = pd.DataFrame({
         'test_type': test_types,
         'model_type': model_types,
         'test_name': test_names,
-        'F1_score_td': f1_scores_td,
-        'F1_score_asd': f1_scores_asd,
         'f1_average': f1_averages,
         'f1_average_eb': f1_averages_ebs
     })
 
-    # Sorting the DataFrame by test_type and splitting it
+    # Sorting the DataFrame by test_type and splitting it by dimension
     if dimension == 'familiarity':
         test_type_order = ['Within', 'Different Familiarity, Same Participants', 'Different Familiarity, Different Participants']
         results['test_type'] = pd.Categorical(results['test_type'], categories=test_type_order, ordered=True)
@@ -703,9 +713,10 @@ def dimension_plot(dimension, plot=True):
         plt.xticks(ticks=range(len(labels)), labels=wrapped_labels, fontsize=14, rotation=45)  # Change 45 to any angle you want
 
         ax.legend(fontsize=14)
-        # ax.set_title(title, fontsize=18)
         plt.tight_layout()
         plt.show()
+
+    return results
 
 def heatmaps_preparation(participant: str):
     """
